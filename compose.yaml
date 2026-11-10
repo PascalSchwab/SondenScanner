@@ -1,0 +1,11 @@
+# Production: put a .env next to this file (see .env.example), then `docker compose up -d`.
+services:
+  sondenscanner:
+    image: ghcr.io/pascalschwab/sondenscanner:latest
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "3000:3000"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]

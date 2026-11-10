@@ -1,0 +1,127 @@
+# Build & release pipeline
+#
+# Trigger: push to main whose (last) commit message contains "[build]" anywhere.
+#          Pushes without "[build]" start the workflow but skip every job.
+#
+# Stages (separate jobs, so a failed one can be restarted alone via
+# "Re-run failed jobs" in the Actions UI):
+#
+#   1. test     npm test
+#   2. version  reads the version from package.json and checks whether the
+#               GitHub release v<version> already exists
+#   3. docker   only for a new version: builds the image and pushes it to
+#               ghcr.io/<owner>/sondenscanner with tags <version> and latest
+#   4. release  only for a new version: creates the git tag v<version> and a
+#               GitHub release with auto-generated notes, pointing at this commit
+#
+# Releasing a new version = bump "version" in package.json and commit with "[build]".
+# Published versions are never overwritten.
+#
+# No secrets are baked into the image: .env is gitignored and dockerignored,
+# configuration is passed at runtime (docker run --env-file .env / compose.yaml).
+
+name: Build and release
+
+on:
+  push:
+    branches:
+      - main
+
+# One run at a time so two pushes can't race for the same release; queued, never cancelled.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: 24
+
+jobs:
+  test:
+    name: 1. Test
+    if: contains(github.event.head_commit.message, '[build]')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: npm test
+
+  version:
+    name: 2. Resolve version
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      is_new: ${{ steps.v.outputs.is_new }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(jq -r .version package.json)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "is_new=false" >> $GITHUB_OUTPUT
+          else
+            echo "is_new=true" >> $GITHUB_OUTPUT
+          fi
+
+  docker:
+    name: 3. Build Docker image
+    needs: version
+    if: needs.version.outputs.is_new == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      # lowercases the image name (GHCR requires it) and adds OCI labels linking the package to this repo
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=${{ needs.version.outputs.version }}
+            type=raw,value=latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  release:
+    name: 4. GitHub release
+    needs: [version, docker]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create release v${{ needs.version.outputs.version }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ needs.version.outputs.version }}
+        run: |
+          # Idempotent so a re-run after a partial failure doesn't fail on an existing release.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "$TAG already exists, nothing to do."
+          else
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "$TAG" \
+              --generate-notes
+          fi

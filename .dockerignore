@@ -1,0 +1,6 @@
+# Allowlist: ignore everything, then let only the app files into the build context.
+# Keeps .env, .git, keys and anything added later out of the image and out of the build cache.
+*
+!package.json
+!index.js
+!map.html

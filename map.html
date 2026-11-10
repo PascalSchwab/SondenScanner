@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SondenScanner</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root { --bg: #fff; --fg: #1a1a1a; --muted: #666; --accent: #d9480f; --card: rgba(255,255,255,.96); }
+  @media (prefers-color-scheme: dark) { :root { --bg: #111; --fg: #eee; --muted: #999; --accent: #ff8a4c; --card: rgba(28,28,28,.96); } }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 15px/1.4 system-ui, sans-serif; }
+  #map { position: absolute; inset: 0; }
+  #card { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 1000; max-width: 480px; margin: 0 auto;
+          background: var(--card); border-radius: 14px; padding: 14px 16px; box-shadow: 0 4px 20px rgba(0,0,0,.25);
+          max-height: 45vh; overflow-y: auto; }
+  h2 { margin: 0 0 8px; font-size: 18px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px 14px; }
+  .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .v { font-size: 17px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .land { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(128,128,128,.3); }
+  .row { padding: 8px 0; border-bottom: 1px solid rgba(128,128,128,.2); cursor: pointer; }
+  .row:last-child { border: 0; }
+  a { color: var(--accent); }
+  button { background: none; border: 0; color: var(--accent); font: inherit; padding: 0; cursor: pointer; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .warn { background: #e03131; color: #fff; border-radius: 8px; padding: 6px 10px; margin-bottom: 10px; font-weight: 600; }
+  .row.hot b { color: #e03131; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="card">Lade…</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const map = L.map('map').setView([48.1, 11.6], 8);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '© OpenStreetMap' }).addTo(map);
+const layer = L.layerGroup().addTo(map);
+const card = document.getElementById('card');
+let selected = new URLSearchParams(location.search).get('s');
+let data = null, zoomed = false;
+// a page opened in the background has no size yet: fit the view once it gets one
+map.on("resize", () => { if (!zoomed && data?.home) render(); });
+document.addEventListener("visibilitychange", () => map.invalidateSize());
+
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const time = (ms) => new Date(ms).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+const speed = (v) => `${v >= 0 ? '▲ steigt' : '▼ fällt'} ${Math.abs(v).toFixed(1)} m/s`;
+
+function render() {
+  layer.clearLayers();
+  const h = data.home;
+  L.circle([h.lat, h.lon], { radius: h.radiusKm * 1000, color: '#888', weight: 1, fill: false }).addTo(layer);
+  L.circle([h.lat, h.lon], { radius: h.warnKm * 1000, color: '#e03131', weight: 1, dashArray: '4 4', fill: false }).addTo(layer);
+  L.circleMarker([h.lat, h.lon], { radius: 6, color: '#1971c2', fillOpacity: 1 }).addTo(layer).bindTooltip('Du');
+
+  for (const s of data.sondes) {
+    const on = s.serial === selected;
+    const color = s.km <= h.warnKm ? '#e03131' : '#f08c00';
+    if (s.path.length) L.polyline(s.path, { color, weight: on ? 3 : 2, dashArray: '6 6', opacity: on ? 1 : .6 }).addTo(layer);
+    if (s.landing) L.circleMarker([s.landing.lat, s.landing.lon], { radius: 6, color, fillColor: '#fff', fillOpacity: 1 })
+      .addTo(layer).bindTooltip(`Landung ${esc(s.serial)}`).on('click', () => select(s.serial));
+    L.circleMarker([s.lat, s.lon], { radius: on ? 10 : 8, color, fillColor: color, fillOpacity: .9 })
+      .addTo(layer).bindTooltip(esc(s.serial)).on('click', () => select(s.serial));
+  }
+
+  const s = data.sondes.find((x) => x.serial === selected);
+  if (s) {
+    const l = s.landing;
+    card.innerHTML = `${s.km <= h.warnKm ? `<div class="warn">⚠ Weniger als ${h.warnKm} km von dir entfernt</div>` : ''}
+      <h2>${esc(s.serial)} <span class="muted">${esc(s.type)}</span></h2>
+      <div class="grid">
+        <div><div class="k">Entfernung</div><div class="v">${s.km.toFixed(1)} km ${esc(s.dir)}</div></div>
+        <div><div class="k">Höhe</div><div class="v">${Math.round(s.alt)} m</div></div>
+        <div><div class="k">Vertikal</div><div class="v">${speed(s.vel_v)}</div></div>
+        <div><div class="k">Frequenz</div><div class="v">${s.frequency ? s.frequency.toFixed(2) + ' MHz' : '–'}</div></div>
+      </div>
+      <div class="muted" style="margin-top:6px">${s.place ? 'Bei ' + esc(s.place) + ' · ' : ''}${s.lat.toFixed(4)}, ${s.lon.toFixed(4)}</div>
+      <div class="land">${l
+        ? `<div class="k">Vorhergesagte Landung</div>
+           <div class="v">~${time(l.time)}${l.place ? ' bei ' + esc(l.place) : ''}</div>
+           <div class="muted">${l.km.toFixed(1)} km ${esc(l.dir)} von dir · ${l.lat.toFixed(4)}, ${l.lon.toFixed(4)} ·
+             <a href="https://www.google.com/maps/dir/?api=1&destination=${l.lat},${l.lon}" target="_blank">Navigation</a></div>`
+        : '<div class="muted">Keine Landevorhersage</div>'}</div>
+      <div class="muted" style="margin-top:10px"><button onclick="select(null)">← Alle Sonden</button> ·
+        <a href="https://sondehub.org/${encodeURIComponent(s.serial)}" target="_blank">SondeHub</a></div>`;
+    if (!zoomed) { map.invalidateSize(); map.fitBounds(L.latLngBounds([[s.lat, s.lon], ...s.path]).pad(.2)); zoomed = map.getSize().x > 0; }
+  } else {
+    card.innerHTML = `<h2>${data.sondes.length} Sonde(n) im Umkreis von ${h.radiusKm} km</h2>` +
+      (data.sondes.map((x) => `<div class="row${x.km <= h.warnKm ? ' hot' : ''}" onclick="select('${esc(x.serial)}')">
+        <b>${x.km <= h.warnKm ? '⚠ ' : ''}${esc(x.serial)}</b> · ${x.km.toFixed(1)} km ${esc(x.dir)} · ${Math.round(x.alt)} m · ${speed(x.vel_v)}
+        · ${x.frequency ? x.frequency.toFixed(2) + ' MHz' : ''}</div>`).join('') || '<div class="muted">Gerade keine.</div>') +
+      `<div class="muted">Stand ${time(data.updated)}</div>`;
+    if (!zoomed) { map.invalidateSize(); map.fitBounds(L.latLngBounds([[h.lat, h.lon], ...data.sondes.map((x) => [x.lat, x.lon])]).pad(.2)); zoomed = map.getSize().x > 0; }
+  }
+}
+
+function select(serial) {
+  selected = serial; zoomed = false;
+  history.replaceState(null, '', serial ? `?s=${encodeURIComponent(serial)}` : location.pathname);
+  render();
+}
+
+async function load() {
+  try {
+    data = await (await fetch('data')).json();
+    if (data.home) render(); else card.textContent = 'Erster Scan läuft…';
+  } catch { card.textContent = 'Server nicht erreichbar'; }
+}
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>
