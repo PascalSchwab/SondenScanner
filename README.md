@@ -3,7 +3,7 @@
 Watches [SondeHub](https://sondehub.org) for weather sondes (radiosondes) near you and sends a push notification to your phone via [ntfy](https://ntfy.sh).
 
 - Notification with distance and direction, nearest place, height, rising/falling speed, frequency and predicted landing (time + place).
-- **Red urgent warning** (ntfy priority 5) when a sonde comes within `WARN_KM` (default 30 km).
+- **Red urgent warning** (ntfy priority 5) when a sonde is predicted to land within `WARN_KM` (default 30 km).
 - Tapping the notification opens a live map served by the app: your radius, all sondes, predicted paths and landing points.
 
 No npm dependencies, Node 24+.
@@ -15,8 +15,8 @@ Copy `.env.example` to `.env` and fill it in. `.env` is gitignored and dockerign
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `LAT`, `LON` | yes | | Your position |
-| `RADIUS_KM` | yes | | Notify about sondes within this distance |
-| `WARN_KM` | | `30` | Urgent red warning within this distance |
+| `RADIUS_KM` | yes | | Notify about sondes whose predicted landing is within this distance |
+| `WARN_KM` | | `30` | Urgent red warning when the predicted landing is within this distance |
 | `NTFY_TOPIC` | yes | | ntfy topic name. Anyone who knows it can read it, so use a random one |
 | `INTERVAL_MIN` | | `2` | Minutes between scans |
 | `PORT` | | `3000` | Port of the map web server |

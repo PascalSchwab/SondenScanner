@@ -55,7 +55,7 @@ function render() {
 
   for (const s of data.sondes) {
     const on = s.serial === selected;
-    const color = s.km <= h.warnKm ? '#e03131' : '#f08c00';
+    const color = s.landing.km <= h.warnKm ? '#e03131' : '#f08c00';
     if (s.path.length) L.polyline(s.path, { color, weight: on ? 3 : 2, dashArray: '6 6', opacity: on ? 1 : .6 }).addTo(layer);
     if (s.landing) L.circleMarker([s.landing.lat, s.landing.lon], { radius: 6, color, fillColor: '#fff', fillOpacity: 1 })
       .addTo(layer).bindTooltip(`Landung ${esc(s.serial)}`).on('click', () => select(s.serial));
@@ -66,7 +66,7 @@ function render() {
   const s = data.sondes.find((x) => x.serial === selected);
   if (s) {
     const l = s.landing;
-    card.innerHTML = `${s.km <= h.warnKm ? `<div class="warn">⚠ Weniger als ${h.warnKm} km von dir entfernt</div>` : ''}
+    card.innerHTML = `${s.landing.km <= h.warnKm ? `<div class="warn">⚠ Landet weniger als ${h.warnKm} km von dir entfernt</div>` : ''}
       <h2>${esc(s.serial)} <span class="muted">${esc(s.type)}</span></h2>
       <div class="grid">
         <div><div class="k">Entfernung</div><div class="v">${s.km.toFixed(1)} km ${esc(s.dir)}</div></div>
@@ -85,9 +85,9 @@ function render() {
         <a href="https://sondehub.org/${encodeURIComponent(s.serial)}" target="_blank">SondeHub</a></div>`;
     if (!zoomed) { map.invalidateSize(); map.fitBounds(L.latLngBounds([[s.lat, s.lon], ...s.path]).pad(.2)); zoomed = map.getSize().x > 0; }
   } else {
-    card.innerHTML = `<h2>${data.sondes.length} Sonde(n) im Umkreis von ${h.radiusKm} km</h2>` +
-      (data.sondes.map((x) => `<div class="row${x.km <= h.warnKm ? ' hot' : ''}" onclick="select('${esc(x.serial)}')">
-        <b>${x.km <= h.warnKm ? '⚠ ' : ''}${esc(x.serial)}</b> · ${x.km.toFixed(1)} km ${esc(x.dir)} · ${Math.round(x.alt)} m · ${speed(x.vel_v)}
+    card.innerHTML = `<h2>${data.sondes.length} Sonde(n) landen im Umkreis von ${h.radiusKm} km</h2>` +
+      (data.sondes.map((x) => `<div class="row${x.landing.km <= h.warnKm ? ' hot' : ''}" onclick="select('${esc(x.serial)}')">
+        <b>${x.landing.km <= h.warnKm ? '⚠ ' : ''}${esc(x.serial)}</b> · landet in ${x.landing.km.toFixed(1)} km ${esc(x.landing.dir)} · ${Math.round(x.alt)} m · ${speed(x.vel_v)}
         · ${x.frequency ? x.frequency.toFixed(2) + ' MHz' : ''}</div>`).join('') || '<div class="muted">Gerade keine.</div>') +
       `<div class="muted">Stand ${time(data.updated)}</div>`;
     if (!zoomed) { map.invalidateSize(); map.fitBounds(L.latLngBounds([[h.lat, h.lon], ...data.sondes.map((x) => [x.lat, x.lon])]).pad(.2)); zoomed = map.getSize().x > 0; }

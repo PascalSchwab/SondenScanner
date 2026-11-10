@@ -37,48 +37,44 @@ async function placeName(lat, lon) {
   }
 }
 
-async function prediction(serial) {
-  try {
-    const res = await fetch(`https://api.v2.sondehub.org/predictions?vehicles=${encodeURIComponent(serial)}`);
-    const [p] = res.ok ? await res.json() : [];
-    if (!p) return null;
-    const path = JSON.parse(p.data);
-    return { path, land: path.at(-1) };
-  } catch {
-    return null;
-  }
+async function getJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`SondeHub HTTP ${res.status}`);
+  return res.json();
 }
 
 export let latest = { updated: null, home: null, sondes: [] };
 
 async function scan({ lat, lon, radiusKm, warnKm, topic, publicUrl }, notified) {
-  const url = `https://api.v2.sondehub.org/sondes?lat=${lat}&lon=${lon}&distance=${radiusKm * 1000}&last=600`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`SondeHub HTTP ${res.status}`);
-  const inRange = Object.values(await res.json())
-    .map((s) => ({ ...s, km: distanceKm(lat, lon, s.lat, s.lon), dir: bearing(lat, lon, s.lat, s.lon) }))
-    .filter((s) => s.km <= radiusKm)
-    .sort((a, b) => a.km - b.km);
-
-  const sondes = await Promise.all(
-    inRange.map(async (s) => {
-      const p = await prediction(s.serial);
-      const l = p?.land;
+  // a sonde can be hundreds of km away and still land nearby, so filter all active predictions by landing point
+  const [predictions, active] = await Promise.all([
+    getJson('https://api.v2.sondehub.org/predictions'),
+    getJson('https://api.v2.sondehub.org/sondes?last=600'),
+  ]);
+  const sondes = predictions
+    .map((p) => {
+      const s = active[p.vehicle];
+      if (!s) return null;
+      const path = JSON.parse(p.data);
+      const l = path.at(-1);
+      const landKm = distanceKm(lat, lon, l.lat, l.lon);
+      if (landKm > radiusKm) return null;
       return {
         serial: s.serial, type: s.subtype || s.type, lat: s.lat, lon: s.lon, alt: s.alt, vel_v: s.vel_v ?? 0,
-        frequency: s.frequency, datetime: s.datetime, km: s.km, dir: s.dir,
-        path: p ? p.path.map((pt) => [pt.lat, pt.lon]) : [],
-        landing: l ? { lat: l.lat, lon: l.lon, time: l.time * 1000, km: distanceKm(lat, lon, l.lat, l.lon), dir: bearing(lat, lon, l.lat, l.lon) } : null,
+        frequency: s.frequency, datetime: s.datetime, km: distanceKm(lat, lon, s.lat, s.lon), dir: bearing(lat, lon, s.lat, s.lon),
+        path: path.map((pt) => [pt.lat, pt.lon]),
+        landing: { lat: l.lat, lon: l.lon, time: l.time * 1000, km: landKm, dir: bearing(lat, lon, l.lat, l.lon) },
       };
-    }),
-  );
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.landing.km - b.landing.km);
 
   latest = { updated: Date.now(), home: { lat, lon, radiusKm, warnKm }, sondes };
 
-  console.log(`${new Date().toISOString()} ${sondes.length} sonde(s) within ${radiusKm} km`);
+  console.log(`${new Date().toISOString()} ${sondes.length} sonde(s) landing within ${radiusKm} km`);
   for (const s of sondes) {
-    // a sonde gets one normal alert, plus one urgent alert once it comes within WARN_KM
-    const warn = s.km <= warnKm;
+    // a sonde gets one normal alert, plus one urgent alert once its predicted landing moves within WARN_KM
+    const warn = s.landing.km <= warnKm;
     const key = warn ? `warn:${s.serial}` : s.serial;
     // sequential on purpose (Nominatim 1 req/s); cached per ~1 km so the map stays current
     s.place = await placeName(s.lat, s.lon);
@@ -100,7 +96,7 @@ async function scan({ lat, lon, radiusKm, warnKm, topic, publicUrl }, notified) 
         // ntfy priority 5 = urgent: long vibration, pop-over, red accent in the app
         priority: warn ? 5 : 3,
         tags: warn ? ['rotating_light'] : ['balloon'],
-        title: `${warn ? 'WARNING: ' : ''}Sonde ${s.serial} - ${s.km.toFixed(0)} km ${s.dir}`,
+        title: `${warn ? 'WARNING: ' : ''}Sonde ${s.serial} lands ${s.landing.km.toFixed(0)} km ${s.landing.dir}`,
         message: `${now}\n${land}`,
         click: `${publicUrl}/?s=${encodeURIComponent(s.serial)}`,
       }),
