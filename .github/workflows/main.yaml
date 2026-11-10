@@ -9,7 +9,7 @@
 #   1. test     npm test
 #   2. version  reads the version from package.json and checks whether the
 #               GitHub release v<version> already exists
-#   3. docker   only for a new version: builds the image and pushes it to
+#   3. docker   only for a new version: builds the image (amd64 + arm64) and pushes it to
 #               ghcr.io/<owner>/sondenscanner with tags <version> and latest
 #   4. release  only for a new version: creates the git tag v<version> and a
 #               GitHub release with auto-generated notes, pointing at this commit
@@ -82,6 +82,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+      # emulates arm64 so one runner can build both architectures (no native code, so emulation is quick)
+      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -99,6 +101,7 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
