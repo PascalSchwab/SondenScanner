@@ -44,6 +44,8 @@ async function getJson(url) {
 }
 
 export let latest = { updated: null, home: null, sondes: [] };
+// shortcut: in-memory only, a restart forgets landed sondes
+const seen = new Map();
 
 async function scan({ lat, lon, radiusKm, warnKm, topic, publicUrl }, notified) {
   // a sonde can be hundreds of km away and still land nearby, so filter all active predictions by landing point
@@ -69,7 +71,13 @@ async function scan({ lat, lon, radiusKm, warnKm, topic, publicUrl }, notified) 
     .filter(Boolean)
     .sort((a, b) => a.landing.km - b.landing.km);
 
-  latest = { updated: Date.now(), home: { lat, lon, radiusKm, warnKm }, sondes };
+  // a landed sonde drops out of SondeHub's active list: keep it on the map for 24 h after its last packet
+  for (const s of sondes) seen.set(s.serial, s);
+  for (const [serial, s] of seen) {
+    s.lost = !sondes.includes(s);
+    if (Date.now() - Date.parse(s.datetime) > 86_400_000) seen.delete(serial);
+  }
+  latest = { updated: Date.now(), home: { lat, lon, radiusKm, warnKm }, sondes: [...seen.values()].sort((a, b) => a.landing.km - b.landing.km) };
 
   console.log(`${new Date().toISOString()} ${sondes.length} sonde(s) landing within ${radiusKm} km`);
   for (const s of sondes) {
